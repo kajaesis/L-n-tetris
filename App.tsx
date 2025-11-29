@@ -564,7 +564,7 @@ export default function App() {
              ref={boardRef}
              className={`relative bg-slate-800 rounded-lg shadow-2xl border-4 border-slate-700 touch-none ${shakeBoard ? 'animate-shake' : ''}`}
              style={{
-                 height: `min(calc(100dvh - 300px), 85vw * ${ROWS/COLS})`,
+                 height: `min(calc(100dvh - 220px), 85vw * ${ROWS/COLS})`,
                  aspectRatio: `${COLS}/${ROWS}`,
              }}
              onTouchStart={handleStart}
@@ -652,21 +652,17 @@ export default function App() {
       </div>
 
       {/* Controls */}
-      <div className="bg-slate-800 p-4 pb-8 flex flex-col gap-4 shadow-[0_-5px_15px_rgba(0,0,0,0.3)] z-10 shrink-0">
+      <div className="bg-slate-800 p-3 pb-6 flex flex-col gap-2 shadow-[0_-5px_15px_rgba(0,0,0,0.3)] z-10 shrink-0">
           
           <div className="flex justify-center items-center w-full max-w-md mx-auto gap-4">
               <Button 
                  onClick={spawnPiece}
                  variant="success"
                  disabled={!!activePiece || clearingRows.length > 0} 
-                 className={`w-full max-w-xs h-20 text-2xl tracking-wider transition-all shadow-xl ${!!activePiece ? 'opacity-50 grayscale' : 'animate-pulse'}`}
+                 className={`w-full max-w-xs h-14 text-xl tracking-wider transition-all shadow-xl ${!!activePiece ? 'opacity-50 grayscale' : 'animate-pulse'}`}
               >
                   {activePiece ? 'Polož dílek' : 'DÁT DÍLEK'}
               </Button>
-          </div>
-          
-          <div className="text-center text-slate-400 text-sm">
-             2x ťukni na dílek pro otočení. Nové tvary za každé 4 body!
           </div>
       </div>
 
