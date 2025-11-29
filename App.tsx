@@ -179,24 +179,19 @@ export default function App() {
 
   // --- Interaction Logic ---
 
-  const getGridPosFromEvent = (e: React.TouchEvent | React.MouseEvent | TouchEvent | MouseEvent): Point | null => {
+  const getGridPosFromEvent = (clientX: number, clientY: number): Point | null => {
     if (!boardRef.current) return null;
     const rect = boardRef.current.getBoundingClientRect();
     
-    // Handle both touch and mouse
-    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-
-    if (clientX === undefined || clientY === undefined) return null;
-
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     
     const cellWidth = rect.width / COLS;
     const cellHeight = rect.height / ROWS;
 
-    const c = Math.floor(x / cellWidth);
-    const r = Math.floor(y / cellHeight);
+    // Use raw float coordinates for clamping, floor for cell ID
+    const c = x / cellWidth;
+    const r = y / cellHeight;
 
     return { r, c };
   };
@@ -229,8 +224,11 @@ export default function App() {
 
   const handleDoubleTap = (pos: Point) => {
     // We only handle rotation for pieces on the grid
-    if (grid[pos.r] && grid[pos.r][pos.c]) {
-      const cell = grid[pos.r][pos.c];
+    const r = Math.floor(pos.r);
+    const c = Math.floor(pos.c);
+
+    if (grid[r] && grid[r][c]) {
+      const cell = grid[r][c];
       if (!cell || !cell.id) return;
 
       // Extract the piece from the grid to simulate "lifting" for rotation check
@@ -293,8 +291,18 @@ export default function App() {
   const handleStart = (e: React.TouchEvent | React.MouseEvent) => {
     if (gameOver || clearingRows.length > 0) return;
     
-    const pos = getGridPosFromEvent(e);
+    // Prevent default browser dragging or scrolling behavior
+    // e.preventDefault(); // Note: Might block scroll on some mobile browsers if not careful, but typically needed for games
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+
+    const pos = getGridPosFromEvent(clientX, clientY);
     if (!pos) return;
+
+    // Floor the coordinates for grid lookup
+    const r = Math.floor(pos.r);
+    const c = Math.floor(pos.c);
 
     // --- Double Tap Detection ---
     const now = Date.now();
@@ -302,23 +310,10 @@ export default function App() {
         handleDoubleTap(pos);
         isDragging.current = false; 
         
-        // Revert any drag that might have been initialized by this tap
+        // If double tap happened, ensure we don't start a drag
         if (activePieceRef.current) {
-             const ap = activePieceRef.current;
-             const startR = dragStartPos.current.r;
-             const startC = dragStartPos.current.c;
-             const newGrid = grid.map(row => [...row]);
-              for (let r = 0; r < ap.shape.length; r++) {
-                for (let c = 0; c < ap.shape[r].length; c++) {
-                    if (ap.shape[r][c]) {
-                         newGrid[startR + r][startC + c] = {
-                             color: ap.color,
-                             id: ap.id
-                         };
-                    }
-                }
-             }
-             setGrid(newGrid);
+             // Revert logic would go here if needed, but double tap logic usually handles the grid directly
+             // Simply clearing selection is safer
              setActivePiece(null);
              activePieceRef.current = null;
         }
@@ -328,8 +323,8 @@ export default function App() {
     // ----------------------------
 
     // Lift Logic (Picking up from grid)
-    if (grid[pos.r] && grid[pos.r][pos.c]) {
-      const cell = grid[pos.r][pos.c];
+    if (grid[r] && grid[r][c]) {
+      const cell = grid[r][c];
       if (cell && cell.id) {
         saveToHistory();
         
@@ -337,14 +332,14 @@ export default function App() {
         const blocks: Point[] = [];
         let minR = ROWS, maxR = 0, minC = COLS, maxC = 0;
         
-        for(let r=0; r<ROWS; r++){
-          for(let c=0; c<COLS; c++){
-             if(grid[r][c]?.id === cell.id) {
-               blocks.push({r, c});
-               if(r < minR) minR = r;
-               if(r > maxR) maxR = r;
-               if(c < minC) minC = c;
-               if(c > maxC) maxC = c;
+        for(let rowIdx=0; rowIdx<ROWS; rowIdx++){
+          for(let colIdx=0; colIdx<COLS; colIdx++){
+             if(grid[rowIdx][colIdx]?.id === cell.id) {
+               blocks.push({r: rowIdx, c: colIdx});
+               if(rowIdx < minR) minR = rowIdx;
+               if(rowIdx > maxR) maxR = rowIdx;
+               if(colIdx < minC) minC = colIdx;
+               if(colIdx > maxC) maxC = colIdx;
              }
           }
         }
@@ -376,6 +371,7 @@ export default function App() {
             setActivePiece(newActivePiece);
 
             isDragging.current = true;
+            // Precise offset: difference between finger position (float) and piece TopLeft (int)
             dragOffset.current = { r: pos.r - minR, c: pos.c - minC };
             dragStartPos.current = liftStartPos;
         }
@@ -383,27 +379,35 @@ export default function App() {
     }
   };
 
-  const handleMove = (e: React.TouchEvent | React.MouseEvent) => {
-    // Check Ref instead of State to avoid stale closure issues during rapid touch moves
+  // Global move handler to ensure dragging works even if finger leaves the exact div
+  const handleGlobalMove = useCallback((clientX: number, clientY: number) => {
     if (!isDragging.current || !activePieceRef.current) return;
     
-    const pos = getGridPosFromEvent(e);
+    const pos = getGridPosFromEvent(clientX, clientY);
     if (!pos) return;
 
-    const newR = pos.r - dragOffset.current.r;
-    const newC = pos.c - dragOffset.current.c;
+    let newR = pos.r - dragOffset.current.r;
+    let newC = pos.c - dragOffset.current.c;
+    
+    // --- WALL CLAMPING LOGIC ---
+    // Ensure the piece stays strictly inside the grid visual area
+    const shapeH = activePieceRef.current.shape.length;
+    const shapeW = activePieceRef.current.shape[0].length;
+    
+    // Clamp Top/Bottom
+    newR = Math.max(0, Math.min(newR, ROWS - shapeH));
+    // Clamp Left/Right
+    newC = Math.max(0, Math.min(newC, COLS - shapeW));
     
     // Update Ref
     activePieceRef.current = { ...activePieceRef.current, position: { r: newR, c: newC } };
     
     // Update State (triggers render)
     setActivePiece(prev => prev ? ({ ...prev, position: { r: newR, c: newC } }) : null);
-  };
+  }, []);
 
-  const handleEnd = () => {
-    // Check Ref for robust termination
-    if (!isDragging.current || !activePieceRef.current) {
-        isDragging.current = false;
+  const handleGlobalEnd = useCallback(() => {
+     if (!isDragging.current || !activePieceRef.current) {
         return;
     }
     isDragging.current = false;
@@ -447,9 +451,43 @@ export default function App() {
     setActivePiece(null);
     
     checkLines(newGrid);
-  };
+  }, [grid]); // Dependency on grid for closure correctness if used (but we prefer ref usually)
 
-  // Check Lines with Animation
+  // Attach global listeners when dragging
+  useEffect(() => {
+      const handleWindowTouchMove = (e: TouchEvent) => {
+          if (isDragging.current) {
+             e.preventDefault(); // Stop scrolling while dragging
+             handleGlobalMove(e.touches[0].clientX, e.touches[0].clientY);
+          }
+      };
+      const handleWindowMouseMove = (e: MouseEvent) => {
+          if (isDragging.current) {
+             handleGlobalMove(e.clientX, e.clientY);
+          }
+      };
+      const handleWindowEnd = () => {
+          if (isDragging.current) {
+              handleGlobalEnd();
+          }
+      };
+
+      if (activePiece) {
+          window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
+          window.addEventListener('touchend', handleWindowEnd);
+          window.addEventListener('mousemove', handleWindowMouseMove);
+          window.addEventListener('mouseup', handleWindowEnd);
+      }
+
+      return () => {
+          window.removeEventListener('touchmove', handleWindowTouchMove);
+          window.removeEventListener('touchend', handleWindowEnd);
+          window.removeEventListener('mousemove', handleWindowMouseMove);
+          window.removeEventListener('mouseup', handleWindowEnd);
+      };
+  }, [activePiece, handleGlobalMove, handleGlobalEnd]);
+
+
   const checkLines = (currentGrid: Grid) => {
     const rowsToClear: number[] = [];
     
@@ -525,12 +563,8 @@ export default function App() {
                  aspectRatio: `${COLS}/${ROWS}`,
              }}
              onTouchStart={handleStart}
-             onTouchMove={handleMove}
-             onTouchEnd={handleEnd}
              onMouseDown={handleStart}
-             onMouseMove={handleMove}
-             onMouseUp={handleEnd}
-             onMouseLeave={handleEnd}
+             // NOTE: Move and End are now handled by Window listeners in useEffect
           >
              {/* Grid Background */}
              <div className="absolute inset-0 pointer-events-none" style={{
