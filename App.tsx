@@ -43,6 +43,9 @@ export default function App() {
   const [shakePiece, setShakePiece] = useState(false); // Visual feedback for invalid action
   const [shakeBoard, setShakeBoard] = useState(false); // Visual feedback for board errors (spawn block)
   
+  // Ref for logic to avoid closure staleness during rapid events
+  const activePieceRef = useRef<ActivePiece | null>(null);
+  
   // Ref for board element to calculate drag coordinates
   const boardRef = useRef<HTMLDivElement>(null);
   const lastTapTime = useRef<number>(0);
@@ -127,7 +130,6 @@ export default function App() {
       // Put the key back in the bag if we failed to spawn (optional, but polite)
       if (bagRef.current.indexOf(nextShapeKey) === -1) {
           bagRef.current.push(nextShapeKey);
-          // Re-shuffle slightly or just push back to end? Just push is fine.
       }
       
       // VISUAL FEEDBACK ONLY - DO NOT END GAME
@@ -165,6 +167,7 @@ export default function App() {
     setGrid(previousGrid);
     setHistory(prev => prev.slice(0, -1));
     setActivePiece(null);
+    activePieceRef.current = null;
     isDragging.current = false;
   };
 
@@ -297,25 +300,27 @@ export default function App() {
     const now = Date.now();
     if (now - lastTapTime.current < 400) {
         handleDoubleTap(pos);
-        isDragging.current = false; // Prevent drag start immediately after rotation
-        // Cancel any active drag that might have started on the first tap
-        if (activePiece) {
-             // Revert active piece to grid if we decided to rotate instead
+        isDragging.current = false; 
+        
+        // Revert any drag that might have been initialized by this tap
+        if (activePieceRef.current) {
+             const ap = activePieceRef.current;
              const startR = dragStartPos.current.r;
              const startC = dragStartPos.current.c;
              const newGrid = grid.map(row => [...row]);
-              for (let r = 0; r < activePiece.shape.length; r++) {
-                for (let c = 0; c < activePiece.shape[r].length; c++) {
-                    if (activePiece.shape[r][c]) {
+              for (let r = 0; r < ap.shape.length; r++) {
+                for (let c = 0; c < ap.shape[r].length; c++) {
+                    if (ap.shape[r][c]) {
                          newGrid[startR + r][startC + c] = {
-                             color: activePiece.color,
-                             id: activePiece.id
+                             color: ap.color,
+                             id: ap.id
                          };
                     }
                 }
              }
              setGrid(newGrid);
              setActivePiece(null);
+             activePieceRef.current = null;
         }
         return;
     }
@@ -358,13 +363,17 @@ export default function App() {
             setGrid(newGrid);
             
             const liftStartPos = { r: minR, c: minC };
-            setActivePiece({
+            const newActivePiece = {
                 type: 'lifted',
                 color: cell.color,
                 id: cell.id,
                 shape: newShape,
                 position: liftStartPos
-            });
+            };
+
+            // Set both Ref (for immediate logic) and State (for render)
+            activePieceRef.current = newActivePiece;
+            setActivePiece(newActivePiece);
 
             isDragging.current = true;
             dragOffset.current = { r: pos.r - minR, c: pos.c - minC };
@@ -375,10 +384,8 @@ export default function App() {
   };
 
   const handleMove = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!isDragging.current || !activePiece) return;
-    
-    // Prevent default to stop scrolling while dragging
-    // e.preventDefault(); 
+    // Check Ref instead of State to avoid stale closure issues during rapid touch moves
+    if (!isDragging.current || !activePieceRef.current) return;
     
     const pos = getGridPosFromEvent(e);
     if (!pos) return;
@@ -386,51 +393,59 @@ export default function App() {
     const newR = pos.r - dragOffset.current.r;
     const newC = pos.c - dragOffset.current.c;
     
+    // Update Ref
+    activePieceRef.current = { ...activePieceRef.current, position: { r: newR, c: newC } };
+    
+    // Update State (triggers render)
     setActivePiece(prev => prev ? ({ ...prev, position: { r: newR, c: newC } }) : null);
   };
 
   const handleEnd = () => {
-    if (!isDragging.current || !activePiece) {
+    // Check Ref for robust termination
+    if (!isDragging.current || !activePieceRef.current) {
         isDragging.current = false;
         return;
     }
     isDragging.current = false;
 
+    const currentPiece = activePieceRef.current;
+
     // Snap to integer
-    const finalR = Math.round(activePiece.position.r);
-    const finalC = Math.round(activePiece.position.c);
+    const finalR = Math.round(currentPiece.position.r);
+    const finalC = Math.round(currentPiece.position.c);
     
     let targetR = finalR;
     let targetC = finalC;
 
     // Strict Collision Check
-    // We check against the current grid which DOES NOT contain the active piece
-    const valid = isValidPosition(activePiece.shape, { r: finalR, c: finalC }, grid);
+    const valid = isValidPosition(currentPiece.shape, { r: finalR, c: finalC }, grid);
     
     if (!valid) {
         // INVALID placement - SNAP BACK TO START
-        // Force it back to where it came from to prevent overlapping
         targetR = dragStartPos.current.r;
         targetC = dragStartPos.current.c;
         triggerShake();
     } 
 
     // ALWAYS COMMIT TO GRID
-    // Whether valid or invalid (reverted), the piece stops floating.
     const newGrid = grid.map(row => [...row]);
-    for (let r = 0; r < activePiece.shape.length; r++) {
-        for (let c = 0; c < activePiece.shape[r].length; c++) {
-            if (activePiece.shape[r][c]) {
+    for (let r = 0; r < currentPiece.shape.length; r++) {
+        for (let c = 0; c < currentPiece.shape[r].length; c++) {
+            if (currentPiece.shape[r][c]) {
                 newGrid[targetR + r][targetC + c] = {
-                    color: activePiece.color,
-                    id: activePiece.id
+                    color: currentPiece.color,
+                    id: currentPiece.id
                 };
             }
         }
     }
     
     setGrid(newGrid);
+    
+    // Clear both Ref and State
+    activePieceRef.current = null;
     setActivePiece(null);
+    
     checkLines(newGrid);
   };
 
@@ -474,6 +489,7 @@ export default function App() {
       setScore(0);
       setGameOver(false);
       setActivePiece(null);
+      activePieceRef.current = null;
       setHistory([]);
       setClearingRows([]);
       maxUnlockedCountRef.current = 2; // Reset progression
@@ -498,7 +514,6 @@ export default function App() {
       </div>
 
       {/* Main Game Area */}
-      {/* Added min-h-0 and margins to ensure it doesn't push the layout */}
       <div className="flex-1 min-h-0 relative flex justify-center items-center p-6 overflow-hidden">
           
           {/* Grid Container */}
@@ -506,9 +521,6 @@ export default function App() {
              ref={boardRef}
              className={`relative bg-slate-800 rounded-lg shadow-2xl border-4 border-slate-700 touch-none ${shakeBoard ? 'animate-shake' : ''}`}
              style={{
-                 // AIRY LAYOUT FIX:
-                 // Calculate height based on available view height (dvh) minus Header/Footer/Margin space (approx 300px)
-                 // Or constrain by width.
                  height: `min(calc(100dvh - 300px), 85vw * ${ROWS/COLS})`,
                  aspectRatio: `${COLS}/${ROWS}`,
              }}
