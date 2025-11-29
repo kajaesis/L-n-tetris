@@ -541,11 +541,16 @@ export default function App() {
       <Unicorn show={showUnicorn} onAnimationEnd={() => setShowUnicorn(false)} />
 
       {/* Header */}
-      <div className="flex justify-between items-center p-4 bg-slate-800 shadow-md z-10 shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="flex justify-between items-center p-4 bg-slate-800 shadow-md z-10 shrink-0 gap-4">
+        <div className="flex items-center gap-2 mr-auto">
            <Star className="text-yellow-400 fill-yellow-400 w-8 h-8" />
            <span className="text-4xl font-bold text-yellow-400">{score}</span>
         </div>
+        
+        <Button onClick={resetGame} variant="danger" icon={<RefreshCw size={24}/>} className="px-4 py-2">
+           Nová hra
+        </Button>
+
         <Button onClick={handleUndo} variant="secondary" disabled={history.length === 0} icon={<Undo size={24}/>} className="px-4 py-2">
            Zpět
         </Button>
